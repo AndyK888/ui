@@ -1,0 +1,93 @@
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to publish"
+        required: true
+  release:
+    types: [published, released, created]
+
+name: Upload Release Asset
+
+jobs:
+  build:
+    name: Upload Release Asset
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.event.release.tag_name || github.ref_name || 'main' }}
+          
+      - name: Copy .env file
+        run: |
+          cp .env.example .env
+             
+      - name: Prepare React Application
+        run: |
+          npm i
+          npm run build
+
+      - name: Cleanup 
+        run: |
+          sudo rm -rf .env
+
+      - name: Build project
+        run: |
+          zip -r ./invoiceninja-react.zip dist/
+      
+      - name: Create or update Gitea release asset
+        env:
+          GITEA_TOKEN: ${{ secrets.LOCAL_REGISTRY_TOKEN }}
+          TAG_NAME: ${{ github.event.inputs.tag || github.event.release.tag_name || github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
+          SERVER_URL: ${{ github.server_url }}
+        run: |
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const tag = process.env.TAG_NAME;
+          if (!tag) {
+            throw new Error('TAG_NAME is required');
+          }
+          fs.writeFileSync('release-payload.json', JSON.stringify({
+            tag_name: tag,
+            name: tag,
+            body: `Release ${tag}\n`,
+            draft: false,
+            prerelease: false,
+          }));
+          NODE
+
+          release_json="$(mktemp)"
+          status=$(curl -sS -o "$release_json" -w "%{http_code}" \
+            -H "Authorization: token ${GITEA_TOKEN}" \
+            "${SERVER_URL}/api/v1/repos/${REPOSITORY}/releases/tags/${TAG_NAME}")
+          if [ "$status" = "404" ]; then
+            curl -fsSL \
+              -X POST \
+              -H "Authorization: token ${GITEA_TOKEN}" \
+              -H "Content-Type: application/json" \
+              --data @release-payload.json \
+              "${SERVER_URL}/api/v1/repos/${REPOSITORY}/releases" > "$release_json"
+          elif [ "$status" -ge 400 ]; then
+            cat "$release_json"
+            exit 1
+          fi
+
+          release_id="$(node -e "const fs=require('node:fs'); console.log(JSON.parse(fs.readFileSync(process.argv[1], 'utf8')).id)" "$release_json")"
+          asset_id="$(node -e "const fs=require('node:fs'); const rel=JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); const asset=(rel.assets || []).find((item) => item.name === 'invoiceninja-react.zip'); console.log(asset ? asset.id : '')" "$release_json")"
+          if [ -n "$asset_id" ]; then
+            curl -fsSL \
+              -X DELETE \
+              -H "Authorization: token ${GITEA_TOKEN}" \
+              "${SERVER_URL}/api/v1/repos/${REPOSITORY}/releases/${release_id}/assets/${asset_id}"
+          fi
+          curl -fsSL \
+            -X POST \
+            -H "Authorization: token ${GITEA_TOKEN}" \
+            -F "attachment=@invoiceninja-react.zip" \
+            "${SERVER_URL}/api/v1/repos/${REPOSITORY}/releases/${release_id}/assets?name=invoiceninja-react.zip"

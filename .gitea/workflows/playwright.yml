@@ -76,8 +76,8 @@ jobs:
           sudo systemctl start mysql.service
       - name: Verify MariaDB connection
         env:
-          DB_PORT: ${{ job.services.mariadb.ports[3306] }}
-          DB_PORT1: ${{ job.services.mariadb.ports[3306] }}
+          DB_PORT: ${{ job.services.mariadb.ports['3306'] }}
+          DB_PORT1: ${{ job.services.mariadb.ports['3306'] }}
 
         run: |
           while ! mysqladmin ping -h"127.0.0.1" -P"$DB_PORT" --silent; do
@@ -90,10 +90,15 @@ jobs:
           extensions: mysql, mysqlnd, sqlite3, bcmath, gmp, gd, curl, zip, openssl, mbstring, xml, redis
 
       - name: Build ninja
+        env:
+          GITEA_TOKEN: ${{ secrets.LOCAL_REGISTRY_TOKEN }}
+          COMPOSER_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          git clone --depth 1 https://${{secrets.commit_secret}}@github.com/invoiceninja/invoiceninja.git -b v5-develop
+          git clone --depth 1 "https://kaprii:${GITEA_TOKEN}@gitea.taila64eb.ts.net/kaprii/invoiceninja.git" -b v5-develop
           cd invoiceninja
-          composer config -g github-oauth.github.com ${{ secrets.GITHUB_TOKEN }}
+          if [ -n "${COMPOSER_GITHUB_TOKEN:-}" ]; then
+            composer config -g github-oauth.github.com "${COMPOSER_GITHUB_TOKEN}"
+          fi
           composer install
           cp .env.ci .env
 
@@ -114,8 +119,15 @@ jobs:
           php artisan serve --port=8000 &
 
       - name: Prepare React FrontEnd
+        env:
+          GITEA_TOKEN: ${{ secrets.LOCAL_REGISTRY_TOKEN }}
+          VITE_API_URL: http://ninja.test:8000
+          PLAYWRIGHT_BASE_URL: http://localhost:4173
+          PLAYWRIGHT_TEST_BASE_URL: http://localhost:4173
+          VITE_IS_TEST: true
+          VITE_ROUTER: browser
         run: |
-          git clone https://${{secrets.commit_secret}}@github.com/invoiceninja/ui.git
+          git clone "https://kaprii:${GITEA_TOKEN}@gitea.taila64eb.ts.net/kaprii/ui.git"
           cd ui
           git checkout develop
           cp .env.example .env
@@ -123,12 +135,6 @@ jobs:
           npx playwright install --with-deps
           npm run build
           npx playwright test --workers=1 --reporter=list --max-failures=1
-          env:
-            VITE_API_URL: http://ninja.test:8000
-            PLAYWRIGHT_BASE_URL: http://localhost:4173
-            PLAYWRIGHT_TEST_BASE_URL: http://localhost:4173
-            VITE_IS_TEST: true
-            VITE_ROUTER: browser
       - uses: actions/upload-artifact@v4
         if: always()
         with:
