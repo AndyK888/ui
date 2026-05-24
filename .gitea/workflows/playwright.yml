@@ -135,7 +135,7 @@ jobs:
           npx playwright install --with-deps
           npm run build
           npx playwright test --workers=1 --reporter=list --max-failures=1
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v3
         if: always()
         with:
           name: playwright-report
